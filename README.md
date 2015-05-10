@@ -2,12 +2,13 @@
 A service to add  docker containers to consul for service discovery
 
 # Options
-
+<pre>
 -h/--help         -  print usage summary
 -i/--interactive  -  interactive mode: passthrough to docker CLI (not implemented yet)
 -d/--daemon       -  daemon mode: poll docker for new services and register them
 -e/--env          -  environment: this will add a tag inside consul for your environment
 --debug           -  enable debug output
+</pre>
 
 # General functionality
 This script will poll 'docker ps' for entries and add them to consul via API. It uses the image name to populate the consul service name (plus tags, see below) and parses forwarded ports to present in consul.
