@@ -104,6 +104,8 @@ if daemon:
         for p in y[5].split(","):
           m = re.match("(\d+\.+)+(\d:)(\d+)->(\d+)\/(\w+)", p.strip())
           if m != None:
+            # putting the name here is bad, and if multiple ports are present this will overwrite the name
+            # I will fix this when it's not 1am
             port =  int(p.strip().split(":")[1].split("->")[0])
             j['name'] = name
             j['tags'] = tags

@@ -10,12 +10,12 @@ A service to add  docker containers to consul for service discovery
 --debug           -  enable debug output
 
 # General functionality
-This script will poll 'docker ps' for entries and add them to consul via API.
+This script will poll 'docker ps' for entries and add them to consul via API. It uses the image name to populate the consul service name (plus tags, see below) and parses forwarded ports to present in consul.
 
 # daemon mode
 This is currently the only available option. You can run this under something like supervisor as a 'background' process.
 
-# How consult tags work
+# How consul tags work in dockingstation
 For repo/foo:latest, dockingstation would turn repo and latest into tags for name foo. You can also pass dockingstation -e to add an environment tag
 
 # registering checks
