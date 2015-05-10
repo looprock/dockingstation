@@ -15,6 +15,9 @@ This script will poll 'docker ps' for entries and add them to consul via API.
 # daemon mode
 This is currently the only available option. You can run this under something like supervisor as a 'background' process.
 
+# How consult tags work
+For repo/foo:latest, dockingstation would turn repo and latest into tags for name foo. You can also pass dockingstation -e to add an environment tag
+
 # registering checks
 You can register checks via the consul KV store.
 checks should map to: http://localhost:8500/v1/kv/checks/[name]
