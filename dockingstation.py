@@ -16,17 +16,19 @@ def usage():
   -h/--help         -  print usage summary
   -i/--interactive  -  interactive mode: passthrough to docker CLI (not implemented yet)
   -d/--daemon       -  daemon mode: poll docker for new services and register them
+  -o/--once         -  run once: poll docker for new services and register them once
   -e/--env          -  environment
   --debug           -  enable debug output
 """
 
 env = False
 daemon = False
+once = False
 interactive = False
 debug = False
 
 try:
-  opts, remainder = getopt.gnu_getopt(sys.argv[1:], "hide:", ["help", "interactive", "daemon", "env=", "debug"])
+  opts, remainder = getopt.gnu_getopt(sys.argv[1:], "hidoe:", ["help", "interactive", "once", "daemon", "env=", "debug"])
 except getopt.GetoptError:
   usage()
   sys.exit(2)
@@ -38,6 +40,8 @@ for opt, arg in opts:
     interactive = "True"
   elif opt in ("-d", "--daemon"):
     daemon = "True"
+  elif opt in ("-o", "--once"):
+    once = "True"
   elif opt in ("-e", "--env"):
     env = arg
   elif opt in ("--debug"):
@@ -59,8 +63,7 @@ def comm(command_line):
         out, error = process.communicate()
         return out
 
-if daemon:
-  while True:
+def poll_docker():
     j = AutoVivification()
     # get output from docker ps
     x = comm("docker ps").split("\n")
@@ -120,12 +123,26 @@ if daemon:
             if debug:
               print j
             r = requests.post("http://127.0.0.1:8500/v1/agent/service/register", data=json.dumps(j))
-            if r.status_code != 200:
-              print "ERROR: request failed with status code %s" % str(r.status_code)
-              print r.content
-              sys.exit(1)
-    time.sleep(5)
+            return r
 
+if daemon:
+    while True:
+        r = poll_docker()
+        if r.status_code != 200:
+            print "ERROR: request failed with status code %s" % str(r.status_code)
+            print r.content
+        else:
+            if debug:
+                print r.content
+        time.sleep(5)
+elif once:
+    r = poll_docker()
+    if r.status_code != 200:
+        print "ERROR: request failed with status code %s" % str(r.status_code)
+        print r.content
+    else:
+        if debug:
+            print r.content
 else:
   print "ERROR: no valid arguments specified!"
   usage()
