@@ -140,6 +140,7 @@ elif once:
     if r.status_code != 200:
         print "ERROR: request failed with status code %s" % str(r.status_code)
         print r.content
+        sys.exit(1)
     else:
         if debug:
             print r.content
