@@ -79,8 +79,13 @@ if daemon:
         n2 = y[1].split(":")
         if n1[0]:
           tags.append(n1[0])
+          tags.append("%s-%s" % (env,n1[0]))
         if n2[1]:
           tags.append(n2[1])
+          tags.append("%s-%s" % (env,n2[1]))
+        if debug:
+          print "Tags:"
+          print tags
         name = n1[1].split(":")[0]
         # now look for checks in kv
         # checks should map to: http://localhost:8500/v1/kv/checks/[name]
