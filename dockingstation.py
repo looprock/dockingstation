@@ -72,19 +72,20 @@ def comm(command_line):
   out, error = process.communicate()
   return out
 
-def findchecks(name, hostport):
+def findchecks(name, service, hostport):
   # now look for checks in kv
   # checks should map to: http://localhost:8500/v1/kv/checks/[name]
   # format maps to: https://www.consul.io/docs/agent/checks.html, minus the initial 'check' root
   # get a list of check
   # use jinja template to map to docker host port
-  chk = requests.get("http://localhost:8500/v1/kv/service/%s/check" % name)
+  chk = requests.get("http://localhost:8500/v1/kv/service/%s/checks/%s" % (name,service))
   if chk.content:
     chk_tmpl = Environment().from_string(base64.b64decode(json.loads(chk.content)[0]['Value'])).render(checkport=hostport)
     rchk = json.loads(chk_tmpl)
     bug(["found check:", rchk])
     return rchk
   else:
+    print "WARNING: no check found for %s %s: %s, you might want to create one" % (name, service, hostport)
     return False
 
 def poll_docker():
@@ -92,13 +93,16 @@ def poll_docker():
   j = AutoVivification()
   # get output from docker ps
   x = comm("docker ps").split("\n")
+  bug([x])
   # remove the 'title' line
   x.pop(0)
+  bug(x)
   for i in x:
     bug([i])
     if i:
       # split apart lines on 'more than 2 whitespaces'
       y = re.split(r'\s{2,}', i)
+      bug([y])
       # so for repo/foo:latest, turn repo and latest into tags for name foo
       if environment:
         tags = [environment,]
@@ -132,16 +136,18 @@ def poll_docker():
         if m != None:
           port =  p.strip().split(":")[1].split("->")
           dockerport = int(port[1].split("/")[0])
+          # We use the port kv map to create a unique name per port for the image
+          j['name'] = "%s-%s" % (name, ports[str(dockerport)])
           if str(dockerport) not in ports.keys():
              print "ERROR: unable to find port %s in service map. Please provide port mappings. Ignoring service!" % str(dockerport)
           else:
             hostport = int(port[0])
-            chk = findchecks(name, hostport)
+            chk = findchecks(name, ports[str(dockerport)], hostport)
             if chk:
               j['check'] = chk
             bug([p, "Docker port: %s" % str(dockerport), "Host port: %s" % str(hostport)])
-            # We use the port kv map to create a unique name per port for the image
-            j['name'] = "%s-%s" % (name, ports[str(dockerport)])
+            if n2[1]:
+              j['name'] = "%s-%s" % (j['name'], n2[1])
             j['tags'] = tags
             j['port'] = hostport
             bug(["Final Payload:", j])
@@ -158,7 +164,7 @@ def poll_docker():
               checksums.append(jsum)
               rval['name']['status'] = 'new'
               rval['name']['content'] = r
-            return rval
+  return rval
 
 if daemon:
   while True:
