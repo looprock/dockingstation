@@ -18,18 +18,18 @@ def usage():
   -i/--interactive  -  interactive mode: passthrough to docker CLI (not implemented yet)
   -d/--daemon       -  daemon mode: poll docker for new services and register them
   -o/--once         -  run once: poll docker for new services and register them once
-  -e/--env          -  environment
+  -e/--environment  -  environment
   --debug           -  enable debug output
 """
 
-env = False
+environment = False
 daemon = False
 once = False
 interactive = False
 debug = False
 
 try:
-  opts, remainder = getopt.gnu_getopt(sys.argv[1:], "hidoe:", ["help", "interactive", "once", "daemon", "env=", "debug"])
+  opts, remainder = getopt.gnu_getopt(sys.argv[1:], "hidoe:", ["help", "interactive", "once", "daemon", "environment=", "debug"])
 except getopt.GetoptError:
   usage()
   sys.exit(2)
@@ -43,8 +43,8 @@ for opt, arg in opts:
     daemon = "True"
   elif opt in ("-o", "--once"):
     once = "True"
-  elif opt in ("-e", "--env"):
-    env = arg
+  elif opt in ("-e", "--environment"):
+    environment = arg
   elif opt in ("--debug"):
     debug = "True"
 
@@ -75,18 +75,18 @@ def poll_docker():
         # split apart lines on 'more than 2 whitespaces'
         y = re.split(r'\s{2,}', i)
         # so for repo/foo:latest, turn repo and latest into tags for name foo
-        if env:
-          tags = [env,]
+        if environment:
+          tags = [environment,]
         else:
           tags = []
         n1 = y[1].split("/")
         n2 = y[1].split(":")
         if n1[0]:
           tags.append(n1[0])
-          tags.append("%s-%s" % (env,n1[0]))
+          tags.append("%s-%s" % (environment,n1[0]))
         if n2[1]:
           tags.append(n2[1])
-          tags.append("%s-%s" % (env,n2[1]))
+          tags.append("%s-%s" % (environment,n2[1]))
         if debug:
           print "Tags:"
           print tags
@@ -121,7 +121,9 @@ def poll_docker():
                # use jinja template to map to docker host port
                chk = requests.get("http://localhost:8500/v1/kv/service/%s/check" % name)
                if chk.content:
-                   j['check'] = Environment().from_string(base64.b64decode(json.loads(chk.content)[0]['Value'])).render(checkport=hostport)
+                   chk_tmpl = Environment().from_string(base64.b64decode(json.loads(chk.content)[0]['Value'])).render(checkport=hostport)
+                   j['check'] = json.loads(chk_tmpl)
+                   print type(j['check'])
                    if debug:
                        print "DEBUG: found check:"
                        print j['check']
@@ -135,8 +137,12 @@ def poll_docker():
                j['tags'] = tags
                j['port'] = hostport
                if debug:
+                 print "Final Payload:"
                  print j
                r = requests.post("http://127.0.0.1:8500/v1/agent/service/register", data=json.dumps(j))
+               if debug:
+                 print r.status_code
+                 print r.content
                return r
 
 if daemon:
@@ -148,6 +154,8 @@ if daemon:
                 print r.content
             else:
                 if debug:
+                    print "SUCCESSfully posted!"
+                    print r.status_code
                     print r.content
         time.sleep(5)
 elif once:
@@ -158,7 +166,11 @@ elif once:
             print r.content
         else:
             if debug:
+                print "SUCCESSfully posted!"
+                print r.status_code
                 print r.content
+    else:
+        print "ERROR: nothing returned in r."
 else:
   print "ERROR: no valid arguments specified!"
   usage()
