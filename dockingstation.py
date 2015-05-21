@@ -95,20 +95,45 @@ def returnconsulself():
   else:
     return False
 
-def deregister(consul_self,dtype, name):
-  payload = {}
-  # ask consul what my NodeName and Datacenter are
-  payload['Node'] = cosul_self['Config']['NodeName']
-  payload['Datacenter'] = consul_self['Config']['Datacenter']
-  if dtype != "node":
-    if dtype == "check":
-      payload['CheckID'] = name
-    elif dtype == "service":
-      payload['ServiceID'] = name
+def deregister(consul_self, container):
+  bug(["Trying to deregister services for container: %s" % container])
+  url = 'http://localhost:8500/v1/kv/node/dockingstation/%s/%s' % (consul_self['Config']['NodeName'], container)
+  errors = False
+  g = requests.get(url)
+  for i in json.loads(base64.b64decode(g.json()[0]['Value'])):
+    # remove checks
+    #{ "Datacenter": "dc1", "Node": "foobar", "CheckID": "service:redis1"}
+    payload = {}
+    # ask consul what my NodeName and Datacenter are
+    payload['Node'] = consul_self['Config']['NodeName']
+    payload['Datacenter'] = consul_self['Config']['Datacenter']
+    payload['CheckID'] = "service:%s" % i
+    r = requests.put("http://localhost:8500/v1/catalog/deregister", data=json.dumps(payload))
+    bug(["Deregistering service : %s" % i, r.status_code, r.content])
+    if r.status_code != 200:
+      # we don't error here because technically we don't need checks
+      #errors = True
+      print "ERROR: unable to remove check %s RE container %s!" % (i, container)
+    # remove services
+    # payload example: {"Datacenter": "oakland", "Node": "docker1", "ServiceID": "docker"}
+    payload = {}
+    # ask consul what my NodeName and Datacenter are
+    payload['Node'] = consul_self['Config']['NodeName']
+    payload['Datacenter'] = consul_self['Config']['Datacenter']
+    payload['ServiceID'] = i
+    r = requests.put("http://localhost:8500/v1/catalog/deregister", data=json.dumps(payload))
+    bug(["Deregistering service : %s" % i, r.status_code, r.content])
+    if r.status_code != 200:
+      errors = True
+      print "ERROR: unable to remove service %s RE container %s!" % (i, container)
+  if errors == False:
+    d = requests.delete(url)
+    if d.status_code == 200:
+      print "Successfully removed all services for container %s!" % container
     else:
-      print "ERROR: invalid type reference! Ignoring!"
-  r = requests.post("http://localhost:8500/v1/catalog/deregister", data=json.dumps(payload))
-  bug([r.status_code, r.content])
+      print "ERROR: unable to remove reference for container %s!" % container
+  else:
+    print "ERROR: unable to remove all services for container %s!" % container
 
 def getserviceports(name):
   # pull a list of service port mappings
@@ -166,8 +191,10 @@ def poll_docker():
   consul_self = returnconsulself()
   if not consul_self:
     return False
-  # also get a list of all my services
+  # also get a list of all my containers from previous run
   known = getnodecontainers(consul_self)
+  # create a list for the containers in THIS run
+  current = []
   rval = AutoVivification()
   j = AutoVivification()
   # get output from docker ps
@@ -183,6 +210,7 @@ def poll_docker():
       services = []
       # split apart lines on 'more than 2 whitespaces'
       y = re.split(r'\s{2,}', i)
+      current.append(y[0])
       bug([y])
       # so for repo/foo:latest, turn repo and latest into tags for name foo
       n = re.match("(\S+)\/(\S+):(\S+)", y[1])
@@ -227,7 +255,7 @@ def poll_docker():
                   rval[j['name']]['content'] = msg
                 else:
                   bug(["Registering container %s" % y[0]])
-                  r = requests.post("http://127.0.0.1:8500/v1/agent/service/register", data=json.dumps(j))
+                  r = requests.put("http://127.0.0.1:8500/v1/agent/service/register", data=json.dumps(j))
                   bug([r.status_code, r.content])
                   rval[j['name']]['status'] = 'new'
                   rval[j['name']]['content'] = r
@@ -235,6 +263,11 @@ def poll_docker():
                     services.append(j['name'])
       if services:
         putnodeservices(consul_self, y[0], services)
+  # last but not least, if we had any containers disappear between runs, deregister the service from consul
+  bug(["current", current, "known", known])
+  for k in known:
+    if k not in current:
+      deregister(consul_self, k)
   return rval
 
 if daemon:
