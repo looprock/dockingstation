@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+"""Discover docker containers and register them with consul"""
 import subprocess
 import shlex
 import re
@@ -11,6 +12,7 @@ import base64
 from jinja2 import Environment
 
 def usage():
+  """Print usage"""
   print sys.argv[0] + """ [options] [appname]
   options:
 
@@ -22,34 +24,32 @@ def usage():
   --debug           -  enable debug output
 """
 
-environment = False
-daemon = False
-once = False
-interactive = False
-debug = False
+ENVIRONMENT = False
+DAEMON = False
+ONCE = False
+INTERACTIVE = False
+DEBUG = False
 
 try:
-  opts, remainder = getopt.gnu_getopt(sys.argv[1:], "hidoe:", ["help", "interactive", "once", "daemon", "environment=", "debug"])
+  OPTS, REMAINDER = getopt.gnu_getopt(sys.argv[1:], "hidoe:", ["help", "interactive", "once", "daemon", "environment=", "debug"])
 except getopt.GetoptError:
   usage()
   sys.exit(2)
-for opt, arg in opts:
+for opt, arg in OPTS:
   if opt in ("-h", "--help"):
     usage()
     sys.exit()
   elif opt in ("-i", "--interactive"):
-    interactive = "True"
+    INTERACTIVE = "True"
   elif opt in ("-d", "--daemon"):
-    daemon = "True"
+    DAEMON = "True"
   # once is bad, do not use except for debugging. See comment above the section at the bottom
   elif opt in ("-o", "--once"):
-    once = "True"
+    ONCE = "True"
   elif opt in ("-e", "--environment"):
-    environment = arg
+    ENVIRONMENT = arg
   elif opt in "--debug":
-    debug = "True"
-
-checksums = []
+    DEBUG = "True"
 
 # generate nested python dictionaries, copied from here:
 # http://stackoverflow.com/questions/635483/what-is-the-best-way-to-implement-nested-dictionaries-in-python
@@ -63,16 +63,20 @@ class AutoVivification(dict):
       return value
 
 def bug(msgs):
-  if debug:
+  """Enable debug output"""
+  if DEBUG:
     for i in msgs:
       print "DEBUG: %s" % (i)
 
 def comm(command_line):
+  """Return output of a system command"""
   process = subprocess.Popen(shlex.split(command_line), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
   out, error = process.communicate()
+  bug([error])
   return out
 
 def findchecks(name, service, hostport):
+  """Get a list of checks for a service you're registering with consul"""
   # now look for checks in kv
   # checks should map to: http://localhost:8500/v1/kv/service/[name]/checks/[value to port map]
   # format maps to: https://www.consul.io/docs/agent/checks.html, minus the initial 'check' root
@@ -89,34 +93,36 @@ def findchecks(name, service, hostport):
     return False
 
 def returnconsulself():
-  r = requests.get("http://localhost:8500/v1/agent/self")
-  if r.content:
-    return r.json()
+  """Return the self information from the local consul agent"""
+  response = requests.get("http://localhost:8500/v1/agent/self")
+  if response.content:
+    return response.json()
   else:
     return False
 
 def deregister(consul_self, container):
+  """Deregister all services and reference for a container in consul"""
   bug(["Trying to deregister services for container: %s" % container])
   url = 'http://localhost:8500/v1/kv/node/dockingstation/%s/%s' % (consul_self['Config']['NodeName'], container)
   errors = False
-  g = requests.get(url)
-  for i in json.loads(base64.b64decode(g.json()[0]['Value'])):
-    CheckID = "service:%s" % i
-    r = requests.get("http://localhost:8500/v1/agent/check/deregister/%s" % CheckID)
-    bug(["Deregistering service : %s" % i, r.status_code, r.content])
-    if r.status_code != 200:
+  containers = requests.get(url)
+  for i in json.loads(base64.b64decode(containers.json()[0]['Value'])):
+    checkid = "service:%s" % i
+    response = requests.get("http://localhost:8500/v1/agent/check/deregister/%s" % checkid)
+    bug(["Deregistering service : %s" % i, response.status_code, response.content])
+    if response.status_code != 200:
       # we don't error here because technically we don't need checks
       #errors = True
       print "ERROR: unable to remove check %s RE container %s!" % (i, container)
     # remove services
-    r = requests.put("http://localhost:8500/v1/agent/service/deregister/%s" % i)
-    bug(["Deregistering service : %s" % i, r.status_code, r.content])
-    if r.status_code != 200:
+    response = requests.put("http://localhost:8500/v1/agent/service/deregister/%s" % i)
+    bug(["Deregistering service : %s" % i, response.status_code, response.content])
+    if response.status_code != 200:
       errors = True
       print "ERROR: unable to remove service %s RE container %s!" % (i, container)
   if errors == False:
-    d = requests.delete(url)
-    if d.status_code == 200:
+    delreq = requests.delete(url)
+    if delreq.status_code == 200:
       print "Successfully removed all services for container %s!" % container
     else:
       print "ERROR: unable to remove reference for container %s!" % container
@@ -124,57 +130,61 @@ def deregister(consul_self, container):
     print "ERROR: unable to remove all services for container %s!" % container
 
 def getserviceports(name):
+  """Return the port to service name map from consul"""
   # pull a list of service port mappings
   # we need this to support multiple ports inside a container
   # if this doesn't exist, dockingstation will blow up and refues to register the service
   bug(["Trying: http://localhost:8500/v1/kv/service/%s/ports" % name])
-  r = requests.get("http://localhost:8500/v1/kv/service/%s/ports" % name)
-  if r.content:
-    bug([base64.b64decode(json.loads(r.content)[0]['Value'])])
-    return json.loads(base64.b64decode(json.loads(r.content)[0]['Value']))
+  response = requests.get("http://localhost:8500/v1/kv/service/%s/ports" % name)
+  if response.content:
+    bug([base64.b64decode(json.loads(response.content)[0]['Value'])])
+    return json.loads(base64.b64decode(json.loads(response.content)[0]['Value']))
   else:
-    return False
+    return {}
 
 def getnodecontainers(consul_self):
+  """Return a list of containers registered with a consul node"""
   # r = requests.get("http://localhost:8500/v1/kv/node/dockingstation/docker2/?recurse")
-  r = requests.get("http://localhost:8500/v1/kv/node/dockingstation/%s/?recurse" % consul_self['Config']['NodeName'])
-  c = []
-  if r.status_code == 200:
-    for i in r.json():
-      c.append(i['Key'].split("/")[-1])
-    bug([c])
-    return c
+  response = requests.get("http://localhost:8500/v1/kv/node/dockingstation/%s/?recurse" % consul_self['Config']['NodeName'])
+  containers = []
+  if response.status_code == 200:
+    for i in response.json():
+      containers.append(i['Key'].split("/")[-1])
+    bug([containers])
+    return containers
   else:
     print "WARNING: no state data returned for %s." % consul_self['Config']['NodeName']
     return []
 
 def putnodeservices(consul_self, container, data):
+  """Register a new container/service with consul"""
   #data = {"780b57a94639": ["versiontest-service-v0-1"]}
   payload = json.dumps(data)
   url = "http://localhost:8500/v1/kv/node/dockingstation/%s/%s" % (consul_self['Config']['NodeName'], container)
-  r = requests.put(url, data=payload)
-  bug(["putnodeservices - %s : %s" % (r.status_code, url)])
-  return r.status_code
+  response = requests.put(url, data=payload)
+  bug(["putnodeservices - %s : %s" % (response.status_code, url)])
+  return response.status_code
 
 def shipit():
-  r = poll_docker()
-  if r:
-    bug(["R:", r])
-    for i in r:
-      if r[i]['status'] == 'registered':
+  """Output a response from poll_docker"""
+  response = poll_docker()
+  if response:
+    bug(["R:", response])
+    for i in response:
+      if response[i]['status'] == 'registered':
         bug(["Nothing to see here, move along, already registered %s" % i])
       else:
-        if r[i]['content'].status_code != 200:
-          print "ERROR: request for %s failed with status code %s" % str(r[i]['name'], r[i]['content'].status_code)
-          print r[i]['content'].content
+        if response[i]['content'].status_code != 200:
+          print "ERROR: request for %s failed with status code %s" % str(response[i]['name'], response[i]['content'].status_code)
+          print response[i]['content'].content
         else:
           print "Successfully Registered: %s" % i
-          bug(["Successfully posted!", r[i]['status'], r[i]['content']])
+          bug(["Successfully posted!", response[i]['status'], response[i]['content']])
   else:
-    print "ERROR: nothing returned in r."
+    print "ERROR: nothing returned in response."
 
 def poll_docker():
-  service_data = {}
+  """Inspect docker containers and associated services and register them with consul if needed"""
   # get data about myself from consul
   consul_self = returnconsulself()
   if not consul_self:
@@ -186,39 +196,39 @@ def poll_docker():
   rval = AutoVivification()
   j = AutoVivification()
   # get output from docker ps
-  x = comm("docker ps").split("\n")
-  bug([x])
+  dockerps = comm("docker ps").split("\n")
+  bug([dockerps])
   # remove the 'title' line
-  x.pop(0)
-  bug(x)
-  for i in x:
+  dockerps.pop(0)
+  bug(dockerps)
+  for i in dockerps:
     ### process docker ps output
     bug([i])
     if i:
       services = []
       # split apart lines on 'more than 2 whitespaces'
-      y = re.split(r'\s{2,}', i)
-      current.append(y[0])
-      bug([y])
+      dockerparts = re.split(r'\s{2,}', i)
+      current.append(dockerparts[0])
+      bug([dockerparts])
       # so for repo/foo:latest, turn repo and latest into tags for name foo
-      n = re.match("(\S+)\/(\S+):(\S+)", y[1])
-      if n == None:
+      contname = re.match(r"(\S+)\/(\S+):(\S+)", dockerparts[1])
+      if contname == None:
         print "ERROR: couldn't match the name of the docker image, something isn't right! Skipping!"
       else:
-        tags = [n.group(1), n.group(3)]
-        # liberally applying environment to tags
-        if environment:
-          tags = [environment, "%s-%s" % (environment, n.group(1)), "%s-%s" % (environment, n.group(3))]
+        tags = [contname.group(1), contname.group(3)]
+        # liberally applying ENVIRONMENT to tags
+        if ENVIRONMENT:
+          tags = [ENVIRONMENT, "%s-%s" % (ENVIRONMENT, contname.group(1)), "%s-%s" % (ENVIRONMENT, contname.group(3))]
         bug(["tags", tags])
-        name = n.group(2)
+        name = contname.group(2)
         ports = getserviceports(name)
         if not ports:
           print "ERROR: please populate ports for service %s since nothing will show up under dockingstation otherwise! Skipping!" % name
         else:
-          for p in y[5].split(","):
-            m = re.match("(\d+\.+)+(\d:)(\d+)->(\d+)\/(\w+)", p.strip())
-            if m != None:
-              port = p.strip().split(":")[1].split("->")
+          for portref in dockerparts[5].split(","):
+            portmatch = re.match(r"(\d+\.+)+(\d:)(\d+)->(\d+)\/(\w+)", portref.strip())
+            if portmatch != None:
+              port = portref.strip().split(":")[1].split("->")
               dockerport = int(port[1].split("/")[0])
               # We use the port kv map to create a unique name per port for the image
               j['name'] = "%s-%s" % (name, ports[str(dockerport)])
@@ -229,28 +239,28 @@ def poll_docker():
                 chk = findchecks(name, ports[str(dockerport)], hostport)
                 if chk:
                   j['check'] = chk
-                bug([p, "Docker port: %s" % str(dockerport), "Host port: %s" % str(hostport)])
+                bug([portref, "Docker port: %s" % str(dockerport), "Host port: %s" % str(hostport)])
                 # also add the version to the name
-                j['name'] = "%s-%s" % (j['name'], n.group(3))
+                j['name'] = "%s-%s" % (j['name'], contname.group(3))
                 j['tags'] = tags
                 j['port'] = hostport
                 bug(["Final Payload:", j])
                 # get a list of containers I've already registered
-                if y[0] in known:
-                  msg = "I've seen container %s before, not updating" % y[0]
+                if dockerparts[0] in known:
+                  msg = "I've seen container %s before, not updating" % dockerparts[0]
                   bug([msg])
                   rval[j['name']]['status'] = 'registered'
                   rval[j['name']]['content'] = msg
                 else:
-                  bug(["Registering container %s" % y[0]])
-                  r = requests.put("http://127.0.0.1:8500/v1/agent/service/register", data=json.dumps(j))
-                  bug([r.status_code, r.content])
+                  bug(["Registering container %s" % dockerparts[0]])
+                  response = requests.put("http://127.0.0.1:8500/v1/agent/service/register", data=json.dumps(j))
+                  bug([response.status_code, response.content])
                   rval[j['name']]['status'] = 'new'
-                  rval[j['name']]['content'] = r
-                  if r.status_code == 200:
+                  rval[j['name']]['content'] = response
+                  if response.status_code == 200:
                     services.append(j['name'])
       if services:
-        putnodeservices(consul_self, y[0], services)
+        putnodeservices(consul_self, dockerparts[0], services)
   # last but not least, if we had any containers disappear between runs, deregister the service from consul
   bug(["current", current, "known", known])
   for k in known:
@@ -258,11 +268,11 @@ def poll_docker():
       deregister(consul_self, k)
   return rval
 
-if daemon:
+if DAEMON:
   while True:
     shipit()
     time.sleep(5)
-elif once:
+elif ONCE:
   shipit()
 else:
   print "ERROR: no valid arguments specified!"
