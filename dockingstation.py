@@ -46,7 +46,7 @@ for opt, arg in opts:
     once = "True"
   elif opt in ("-e", "--environment"):
     environment = arg
-  elif opt in ("--debug"):
+  elif opt in "--debug":
     debug = "True"
 
 checksums = []
@@ -68,7 +68,7 @@ def bug(msgs):
       print "DEBUG: %s" % (i)
 
 def comm(command_line):
-  process = subprocess.Popen(shlex.split(command_line), stdout = subprocess.PIPE, stderr = subprocess.PIPE)
+  process = subprocess.Popen(shlex.split(command_line), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
   out, error = process.communicate()
   return out
 
@@ -78,7 +78,7 @@ def findchecks(name, service, hostport):
   # format maps to: https://www.consul.io/docs/agent/checks.html, minus the initial 'check' root
   # get a list of check
   # use jinja template to map to docker host port
-  chk = requests.get("http://localhost:8500/v1/kv/service/%s/checks/%s" % (name,service))
+  chk = requests.get("http://localhost:8500/v1/kv/service/%s/checks/%s" % (name, service))
   if chk.content:
     chk_tmpl = Environment().from_string(base64.b64decode(json.loads(chk.content)[0]['Value'])).render(checkport=hostport)
     rchk = json.loads(chk_tmpl)
@@ -101,27 +101,15 @@ def deregister(consul_self, container):
   errors = False
   g = requests.get(url)
   for i in json.loads(base64.b64decode(g.json()[0]['Value'])):
-    # remove checks
-    #{ "Datacenter": "dc1", "Node": "foobar", "CheckID": "service:redis1"}
-    payload = {}
-    # ask consul what my NodeName and Datacenter are
-    payload['Node'] = consul_self['Config']['NodeName']
-    payload['Datacenter'] = consul_self['Config']['Datacenter']
-    payload['CheckID'] = "service:%s" % i
-    r = requests.put("http://localhost:8500/v1/catalog/deregister", data=json.dumps(payload))
+    CheckID = "service:%s" % i
+    r = requests.get("http://localhost:8500/v1/agent/check/deregister/%s" % CheckID)
     bug(["Deregistering service : %s" % i, r.status_code, r.content])
     if r.status_code != 200:
       # we don't error here because technically we don't need checks
       #errors = True
       print "ERROR: unable to remove check %s RE container %s!" % (i, container)
     # remove services
-    # payload example: {"Datacenter": "oakland", "Node": "docker1", "ServiceID": "docker"}
-    payload = {}
-    # ask consul what my NodeName and Datacenter are
-    payload['Node'] = consul_self['Config']['NodeName']
-    payload['Datacenter'] = consul_self['Config']['Datacenter']
-    payload['ServiceID'] = i
-    r = requests.put("http://localhost:8500/v1/catalog/deregister", data=json.dumps(payload))
+    r = requests.put("http://localhost:8500/v1/agent/service/deregister/%s" % i)
     bug(["Deregistering service : %s" % i, r.status_code, r.content])
     if r.status_code != 200:
       errors = True
@@ -154,8 +142,8 @@ def getnodecontainers(consul_self):
   if r.status_code == 200:
     for i in r.json():
       c.append(i['Key'].split("/")[-1])
-    return c
     bug([c])
+    return c
   else:
     print "WARNING: no state data returned for %s." % consul_self['Config']['NodeName']
     return []
@@ -177,10 +165,10 @@ def shipit():
         bug(["Nothing to see here, move along, already registered %s" % i])
       else:
         if r[i]['content'].status_code != 200:
-          print "ERROR: request for %s failed with status code %s" % str(r[i]['name'],r[i]['content'].status_code)
+          print "ERROR: request for %s failed with status code %s" % str(r[i]['name'], r[i]['content'].status_code)
           print r[i]['content'].content
         else:
-          print "Successfully Registered: %s" % i 
+          print "Successfully Registered: %s" % i
           bug(["Successfully posted!", r[i]['status'], r[i]['content']])
   else:
     print "ERROR: nothing returned in r."
@@ -220,7 +208,7 @@ def poll_docker():
         tags = [n.group(1), n.group(3)]
         # liberally applying environment to tags
         if environment:
-          tags = [environment,"%s-%s" % (environment,n.group(1)), "%s-%s" % (environment,n.group(3))]
+          tags = [environment, "%s-%s" % (environment, n.group(1)), "%s-%s" % (environment, n.group(3))]
         bug(["tags", tags])
         name = n.group(2)
         ports = getserviceports(name)
@@ -230,7 +218,7 @@ def poll_docker():
           for p in y[5].split(","):
             m = re.match("(\d+\.+)+(\d:)(\d+)->(\d+)\/(\w+)", p.strip())
             if m != None:
-              port =  p.strip().split(":")[1].split("->")
+              port = p.strip().split(":")[1].split("->")
               dockerport = int(port[1].split("/")[0])
               # We use the port kv map to create a unique name per port for the image
               j['name'] = "%s-%s" % (name, ports[str(dockerport)])
